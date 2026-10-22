@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ticketing.notification.mapper.NotificationMapper">
+  <sql id="visible">
+    (n.recipient_id = #{userId} AND n.invalidated_at IS NULL
+      AND EXISTS (
+        SELECT 1 FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+        JOIN role_permissions rp ON rp.role_id = r.id JOIN permissions p ON p.id = rp.permission_id
+        WHERE ur.user_id = #{userId} AND (
+          p.code = 'ticket:read:all'
+          OR (p.code = 'ticket:read:own' AND t.requester_id = #{userId})
+          OR (p.code = 'ticket:read:assigned' AND t.assignee_id = #{userId})
+        )
+      )
+      OR n.recipient_id = #{userId} AND n.invalidated_at IS NULL AND EXISTS (
+        SELECT 1 FROM user_permission up WHERE up.user_id=#{userId} AND up.status='APPROVED' AND (
+          up.permission_code='ticket:read:all'
+          OR (up.permission_code='ticket:read:own' AND t.requester_id=#{userId})
+          OR (up.permission_code='ticket:read:assigned' AND t.assignee_id=#{userId})
+        )
+      ))
+  </sql>
+  <select id="countUnread" resultType="long">
+    SELECT COUNT(*) FROM notifications n JOIN tickets t ON t.id=n.ticket_id
+    WHERE <include refid="visible"/> AND n.read_at IS NULL
+  </select>
+  <select id="list" resultType="com.ticketing.notification.model.NotificationRow">
+    SELECT n.id,n.ticket_id,t.request_id,n.type,n.created_at,n.read_at FROM notifications n JOIN tickets t ON t.id=n.ticket_id
+    WHERE <include refid="visible"/> ORDER BY n.id DESC LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <update id="markRead">
+    UPDATE notifications n JOIN tickets t ON t.id=n.ticket_id SET n.read_at=COALESCE(n.read_at,UTC_TIMESTAMP(6))
+    WHERE n.id=#{id} AND <include refid="visible"/>
+  </update>
+  <insert id="insert">
+    INSERT INTO notifications(recipient_id,ticket_id,event_id,type)
+    SELECT #{recipientId},#{ticketId},#{eventId},#{type} FROM users WHERE id=#{recipientId} AND enabled=1
+  </insert>
+  <update id="invalidate">UPDATE notifications SET invalidated_at=UTC_TIMESTAMP(6)
+    WHERE ticket_id=#{ticketId} AND recipient_id=#{userId} AND invalidated_at IS NULL</update>
+</mapper>

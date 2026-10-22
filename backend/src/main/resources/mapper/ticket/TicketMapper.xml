@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ticketing.ticket.mapper.TicketMapper">
+  <sql id="select">SELECT t.*, u.display_name requester_name, a.display_name assignee_name
+    FROM tickets t JOIN users u ON u.id=t.requester_id LEFT JOIN users a ON a.id=t.assignee_id</sql>
+  <select id="find" resultType="com.ticketing.ticket.model.TicketRow"><include refid="select"/> WHERE t.id=#{id}</select>
+  <select id="lock" resultType="com.ticketing.ticket.model.TicketRow">SELECT * FROM tickets WHERE id=#{id} FOR UPDATE</select>
+  <select id="findRequest" resultType="com.ticketing.ticket.model.TicketRow"><include refid="select"/> WHERE t.request_id=#{requestId}</select>
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO tickets(request_id,requester_id,original_text,creation_digest,initial_category,category,status,related_ticket_id)
+    VALUES(#{requestId},#{requesterId},#{originalText},#{creationDigest},#{initialCategory},#{category},'PENDING',#{relatedTicketId})
+  </insert>
+  <update id="update">
+    UPDATE tickets SET category=#{category}, status=#{status}, assignee_id=#{assigneeId},
+      related_ticket_id=#{relatedTicketId}, resolution_code=#{resolutionCode},
+      version=version+1, updated_at=UTC_TIMESTAMP(6), completed_at=#{completedAt} WHERE id=#{id} AND version=#{version}
+  </update>
+  <sql id="filters">
+    WHERE 1=1
+    <choose>
+      <when test="scope == 'ALL'"/>
+      <when test="scope == 'OWN'">AND t.requester_id=#{userId}</when>
+      <when test="scope == 'ASSIGNED'">AND t.assignee_id=#{userId}</when>
+      <otherwise>AND 1=0</otherwise>
+    </choose>
+    <if test="status != null and status != ''">AND t.status=#{status}</if>
+    <if test="category != null and category != ''">AND t.category=#{category}</if>
+    <if test="requestId != null and requestId != ''">AND t.request_id=#{requestId}</if>
+    <if test="unassigned">AND t.assignee_id IS NULL</if>
+  </sql>
+  <select id="list" resultType="com.ticketing.ticket.model.TicketRow">
+    <include refid="select"/><include refid="filters"/> ORDER BY t.created_at DESC,t.id DESC LIMIT #{limit} OFFSET #{offset}
+  </select>
+  <select id="count" resultType="long">SELECT COUNT(*) FROM tickets t <include refid="filters"/></select>
+  <sql id="handlers">SELECT u.id,u.display_name,r.code role FROM users u JOIN user_roles ur ON ur.user_id=u.id
+    JOIN roles r ON r.id=ur.role_id WHERE u.enabled=1 AND r.code IN ('COORDINATOR','SUPPORT')</sql>
+  <select id="handlers" resultType="com.ticketing.ticket.model.HandlerOption"><include refid="handlers"/> ORDER BY r.code,u.id</select>
+  <select id="handler" resultType="com.ticketing.ticket.model.HandlerOption"><include refid="handlers"/> AND u.id=#{id}</select>
+  <select id="coordinators" resultType="long">SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id=u.id
+    JOIN roles r ON r.id=ur.role_id WHERE u.enabled=1 AND r.code='COORDINATOR'</select>
+  <insert id="addEvent" useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO ticket_events(ticket_id,actor_id,event_type,content,changes)
+    VALUES(#{ticketId},#{actorId},#{eventType},#{content},#{changes})
+  </insert>
+  <select id="events" resultType="com.ticketing.ticket.model.EventRow">
+    SELECT e.*,u.display_name actor_name FROM ticket_events e JOIN users u ON u.id=e.actor_id
+    WHERE e.ticket_id=#{ticketId} ORDER BY e.created_at,e.id
+  </select>
+  <select id="permissions" resultType="com.ticketing.ticket.model.PermissionOption">
+    SELECT code,name FROM permissions ORDER BY id
+  </select>
+  <select id="permission" resultType="com.ticketing.ticket.model.PermissionOption">
+    SELECT code,name FROM permissions WHERE code=#{code}
+  </select>
+  <select id="permissionRequest" resultType="com.ticketing.ticket.model.UserPermissionRow">
+    SELECT * FROM user_permission WHERE ticket_id=#{ticketId}
+  </select>
+  <insert id="insertPermissionRequest">
+    INSERT INTO user_permission(ticket_id,user_id,permission_code,permission_name,status)
+    SELECT #{ticketId},#{userId},code,name,'PENDING' FROM permissions WHERE code=#{permissionCode}
+  </insert>
+  <insert id="insertLegacyPermissionRequest">
+    INSERT INTO user_permission(ticket_id,user_id,permission_name,status) VALUES(#{ticketId},#{userId},#{permissionName},'PENDING')
+  </insert>
+  <update id="reviewPermissionRequest">
+    UPDATE user_permission SET status=#{status},reviewed_by=#{reviewedBy},reviewed_at=UTC_TIMESTAMP(6),
+      permission_code=COALESCE(#{permissionCode},permission_code),
+      permission_name=COALESCE((SELECT p.name FROM permissions p WHERE p.code=#{permissionCode}),permission_name)
+    WHERE ticket_id=#{ticketId} AND status='PENDING'
+  </update>
+</mapper>

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ticketing.attachment.mapper.AttachmentMapper">
+  <select id="find" resultType="com.ticketing.attachment.model.AttachmentRow">SELECT * FROM attachments WHERE id=#{id}</select>
+  <select id="lockToken" resultType="com.ticketing.attachment.model.AttachmentRow">SELECT * FROM attachments WHERE upload_token=#{token} FOR UPDATE</select>
+  <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+    INSERT INTO attachments(upload_token,uploader_id,bucket_name,object_key,original_filename,media_type,size_bytes,
+      sha256,image_width,image_height,storage_state,expires_at)
+    VALUES(#{uploadToken},#{uploaderId},#{bucketName},#{objectKey},#{originalFilename},#{mediaType},#{sizeBytes},
+      #{sha256},#{imageWidth},#{imageHeight},'UPLOADING',DATE_ADD(UTC_TIMESTAMP(6),INTERVAL 24 HOUR))
+  </insert>
+  <update id="ready">UPDATE attachments SET storage_state='READY' WHERE id=#{id} AND storage_state='UPLOADING' AND expires_at &gt; UTC_TIMESTAMP(6)</update>
+  <update id="pending">UPDATE attachments SET storage_state='DELETE_PENDING',expires_at=UTC_TIMESTAMP(6) WHERE id=#{id} AND storage_state IN ('UPLOADING','READY')</update>
+  <update id="bind">UPDATE attachments SET storage_state='BOUND',ticket_id=#{ticketId},ticket_event_id=#{eventId},bound_at=UTC_TIMESTAMP(6),expires_at=NULL
+    WHERE id=#{id} AND storage_state='READY' AND expires_at &gt; UTC_TIMESTAMP(6)</update>
+  <select id="countBound" resultType="int">SELECT COUNT(*) FROM attachments WHERE ticket_id=#{ticketId} AND storage_state='BOUND'</select>
+  <select id="countTemporary" resultType="int">SELECT COUNT(*) FROM attachments WHERE uploader_id=#{userId} AND storage_state IN ('UPLOADING','READY')</select>
+  <select id="lockUploader" resultType="long">SELECT id FROM users WHERE id=#{id} AND enabled=1 FOR UPDATE</select>
+  <select id="list" resultType="com.ticketing.attachment.model.AttachmentRow">SELECT * FROM attachments WHERE ticket_id=#{ticketId} AND storage_state='BOUND' ORDER BY id</select>
+  <select id="expired" resultType="com.ticketing.attachment.model.AttachmentRow">SELECT * FROM attachments
+    WHERE storage_state IN ('UPLOADING','READY','DELETE_PENDING') AND expires_at &lt;= UTC_TIMESTAMP(6) ORDER BY id LIMIT 100</select>
+  <update id="claimExpired">UPDATE attachments SET storage_state='DELETE_PENDING'
+    WHERE id=#{id} AND storage_state IN ('UPLOADING','READY','DELETE_PENDING') AND expires_at &lt;= UTC_TIMESTAMP(6)</update>
+  <delete id="deletePending">DELETE FROM attachments WHERE id=#{id} AND storage_state='DELETE_PENDING'</delete>
+</mapper>
